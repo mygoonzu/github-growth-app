@@ -53,6 +53,12 @@ def parse_args() -> argparse.Namespace:
             "Find public GitHub repositories above a star threshold and rank weekly star growth."
         )
     )
+    parser.add_argument(
+        "--mode",
+        choices=["growth", "top"],
+        default="growth",
+        help="growth: rank by star growth, top: rank by total stars",
+    )
     parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token (or GITHUB_TOKEN env)")
     parser.add_argument("--min-stars", type=int, default=500, help="Minimum total star count")
     parser.add_argument("--max-repos", type=int, default=30, help="Maximum repositories to analyze")
@@ -402,6 +408,39 @@ def print_json(items: List[RepoGrowth], top: int) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def print_top_table(repos: List[Dict[str, Any]], top: int) -> None:
+    show = repos[:top]
+    if not show:
+        print("No repositories matched the criteria.")
+        return
+
+    header = f"{'#':<3} {'Repo':<35} {'Stars':>9} {'Language':<15}"
+    print(header)
+    print("-" * len(header))
+
+    for i, repo in enumerate(show, start=1):
+        lang = (repo.get("primaryLanguage") or {}).get("name") or "N/A"
+        print(
+            f"{i:<3} {repo['nameWithOwner'][:35]:<35} {repo['stargazerCount']:>9} {lang[:15]:<15}"
+        )
+        print(f"    {repo['url']}")
+
+
+def print_top_json(repos: List[Dict[str, Any]], top: int) -> None:
+    payload = []
+    for repo in repos[:top]:
+        payload.append(
+            {
+                "repo": repo["nameWithOwner"],
+                "url": repo["url"],
+                "stars": repo["stargazerCount"],
+                "language": (repo.get("primaryLanguage") or {}).get("name") or "N/A",
+                "description": (repo.get("description") or "").strip(),
+            }
+        )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def main() -> int:
     load_env_file()
     args = parse_args()
@@ -423,6 +462,14 @@ def main() -> int:
         return 1
 
     repos = fetch_repositories(args.token, args.min_stars, args.max_repos)
+    if args.mode == "top":
+        repos.sort(key=lambda x: x.get("stargazerCount", 0), reverse=True)
+        if args.json:
+            print_top_json(repos, args.top)
+        else:
+            print_top_table(repos, args.top)
+        return 0
+
     ranked = rank_repositories(
         args.token,
         repos,

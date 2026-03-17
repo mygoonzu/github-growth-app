@@ -8,6 +8,7 @@ A Python CLI tool to find public GitHub repositories with:
 - Searches public repositories by star threshold
 - Computes `weekly_stars`, `previous_week_stars`, `delta`, and `growth_rate`
 - Sorts by `delta`, `weekly_stars`, or `growth_rate`
+- Supports direct top-repository ranking by total stars
 - Outputs as table or JSON
 - Includes retry/backoff for transient API errors
 - Supports weekly, monthly, or custom-day analysis windows
@@ -60,6 +61,11 @@ Export JSON:
 python3 github_growth_app.py --json --top 20 > result.json
 ```
 
+Top repositories by total stars:
+```bash
+python3 github_growth_app.py --mode top --min-stars 500 --top 20
+```
+
 Monthly window (30 days):
 ```bash
 python3 github_growth_app.py --period month --min-weekly-stars 20 --top 20
@@ -71,6 +77,7 @@ python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
 ```
 
 ## Arguments
+- `--mode`: `growth` (default) or `top` (rank by total stars)
 - `--token`: GitHub token (if omitted, read from `GITHUB_TOKEN` or `.env`)
 - `--min-stars`: minimum total stars (default: `500`)
 - `--max-repos`: maximum repositories to analyze (default: `30`)
