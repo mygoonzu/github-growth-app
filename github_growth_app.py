@@ -730,7 +730,7 @@ def main() -> int:
             fetched=fetched_count,
             enriched_errors=enrich_errors,
             after_filters=filtered_count,
-            output=min(args.top, len(repos)),
+            output_count=min(args.top, len(repos)),
         )
         return 0
 
@@ -757,7 +757,7 @@ def main() -> int:
         fetched=fetched_count,
         enriched_errors=enrich_errors,
         after_filters=filtered_count,
-        output=min(args.top, len(ranked)),
+        output_count=min(args.top, len(ranked)),
         skipped_growth_api=rank_result.skipped_api_errors,
         window_days=window_days,
     )
