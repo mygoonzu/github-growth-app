@@ -20,6 +20,9 @@ class RepoGrowth:
     name_with_owner: str
     url: str
     stars: int
+    forks: int
+    watchers: int
+    network: int
     weekly_stars: int
     previous_week_stars: int
     delta: int
@@ -61,6 +64,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token (or GITHUB_TOKEN env)")
     parser.add_argument("--min-stars", type=int, default=500, help="Minimum total star count")
+    parser.add_argument("--min-forks", type=int, default=0, help="Minimum fork count")
+    parser.add_argument("--min-watchers", type=int, default=0, help="Minimum watcher count")
+    parser.add_argument("--min-network", type=int, default=0, help="Minimum network count")
     parser.add_argument("--max-repos", type=int, default=30, help="Maximum repositories to analyze")
     parser.add_argument(
         "--min-weekly-stars",
@@ -82,9 +88,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sort-by",
-        choices=["delta", "weekly_stars", "growth_rate"],
+        choices=["delta", "weekly_stars", "growth_rate", "stars", "forks", "watchers", "network"],
         default="delta",
-        help="Result sorting metric",
+        help="Result sorting metric (growth mode or top mode)",
     )
     parser.add_argument("--top", type=int, default=15, help="Number of results to display")
     parser.add_argument(
@@ -171,6 +177,10 @@ def fetch_repositories(token: str, min_stars: int, max_repos: int) -> List[Dict[
             nameWithOwner
             url
             stargazerCount
+            forkCount
+            watchers {
+              totalCount
+            }
             description
             primaryLanguage {
               name
@@ -206,6 +216,43 @@ def fetch_repositories(token: str, min_stars: int, max_repos: int) -> List[Dict[
 
 def parse_iso8601(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def enrich_repository_metrics(token: str, owner: str, name: str) -> Dict[str, int]:
+    url = f"{GITHUB_REST_URL}/repos/{owner}/{name}"
+    data, _ = github_json_request(token, url)
+    if not isinstance(data, dict):
+        return {"forks": 0, "watchers": 0, "network": 0}
+    return {
+        "forks": int(data.get("forks_count", 0) or 0),
+        "watchers": int(data.get("subscribers_count", 0) or 0),
+        "network": int(data.get("network_count", 0) or 0),
+    }
+
+
+def apply_base_filters(
+    repos: List[Dict[str, Any]],
+    min_stars: int,
+    min_forks: int,
+    min_watchers: int,
+    min_network: int,
+) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    for repo in repos:
+        stars = int(repo.get("stargazerCount", 0) or 0)
+        forks = int(repo.get("forkCount", 0) or 0)
+        watchers = int(repo.get("watchersCount", 0) or 0)
+        network = int(repo.get("networkCount", 0) or 0)
+        if stars < min_stars:
+            continue
+        if forks < min_forks:
+            continue
+        if watchers < min_watchers:
+            continue
+        if network < min_network:
+            continue
+        filtered.append(repo)
+    return filtered
 
 
 def parse_last_page(link_header: str) -> Optional[int]:
@@ -339,6 +386,9 @@ def rank_repositories(
                 name_with_owner=repo["nameWithOwner"],
                 url=repo["url"],
                 stars=repo["stargazerCount"],
+                forks=repo.get("forkCount", 0),
+                watchers=repo.get("watchersCount", 0),
+                network=repo.get("networkCount", 0),
                 weekly_stars=weekly,
                 previous_week_stars=previous,
                 delta=delta,
@@ -354,6 +404,14 @@ def rank_repositories(
         result.sort(key=lambda r: (r.delta, r.weekly_stars, r.stars), reverse=True)
     elif sort_by == "weekly_stars":
         result.sort(key=lambda r: (r.weekly_stars, r.delta, r.stars), reverse=True)
+    elif sort_by == "stars":
+        result.sort(key=lambda r: (r.stars, r.delta), reverse=True)
+    elif sort_by == "forks":
+        result.sort(key=lambda r: (r.forks, r.delta), reverse=True)
+    elif sort_by == "watchers":
+        result.sort(key=lambda r: (r.watchers, r.delta), reverse=True)
+    elif sort_by == "network":
+        result.sort(key=lambda r: (r.network, r.delta), reverse=True)
     else:
         result.sort(
             key=lambda r: (
@@ -397,6 +455,9 @@ def print_json(items: List[RepoGrowth], top: int) -> None:
                 "repo": x.name_with_owner,
                 "url": x.url,
                 "stars": x.stars,
+                "forks": x.forks,
+                "watchers": x.watchers,
+                "network": x.network,
                 "weekly_stars": x.weekly_stars,
                 "previous_week_stars": x.previous_week_stars,
                 "delta": x.delta,
@@ -414,14 +475,18 @@ def print_top_table(repos: List[Dict[str, Any]], top: int) -> None:
         print("No repositories matched the criteria.")
         return
 
-    header = f"{'#':<3} {'Repo':<35} {'Stars':>9} {'Language':<15}"
+    header = (
+        f"{'#':<3} {'Repo':<35} {'Stars':>9} {'Forks':>8} {'Watch':>7} {'Network':>8} {'Language':<15}"
+    )
     print(header)
     print("-" * len(header))
 
     for i, repo in enumerate(show, start=1):
         lang = (repo.get("primaryLanguage") or {}).get("name") or "N/A"
         print(
-            f"{i:<3} {repo['nameWithOwner'][:35]:<35} {repo['stargazerCount']:>9} {lang[:15]:<15}"
+            f"{i:<3} {repo['nameWithOwner'][:35]:<35} {repo['stargazerCount']:>9} "
+            f"{repo.get('forkCount', 0):>8} {repo.get('watchersCount', 0):>7} "
+            f"{repo.get('networkCount', 0):>8} {lang[:15]:<15}"
         )
         print(f"    {repo['url']}")
 
@@ -434,6 +499,9 @@ def print_top_json(repos: List[Dict[str, Any]], top: int) -> None:
                 "repo": repo["nameWithOwner"],
                 "url": repo["url"],
                 "stars": repo["stargazerCount"],
+                "forks": repo.get("forkCount", 0),
+                "watchers": repo.get("watchersCount", 0),
+                "network": repo.get("networkCount", 0),
                 "language": (repo.get("primaryLanguage") or {}).get("name") or "N/A",
                 "description": (repo.get("description") or "").strip(),
             }
@@ -462,8 +530,39 @@ def main() -> int:
         return 1
 
     repos = fetch_repositories(args.token, args.min_stars, args.max_repos)
+    for repo in repos:
+        owner = repo["owner"]["login"]
+        name = repo["name"]
+        try:
+            metrics = enrich_repository_metrics(args.token, owner, name)
+        except RuntimeError as exc:
+            print(
+                f"Warning: failed to enrich {repo['nameWithOwner']} metrics: {exc}",
+                file=sys.stderr,
+            )
+            metrics = {"forks": 0, "watchers": 0, "network": 0}
+        repo["forkCount"] = metrics["forks"]
+        repo["watchersCount"] = metrics["watchers"]
+        repo["networkCount"] = metrics["network"]
+        if "watchers" in repo and isinstance(repo["watchers"], dict):
+            repo["watchersCount"] = int(repo["watchers"].get("totalCount", repo["watchersCount"]) or 0)
+
+    repos = apply_base_filters(
+        repos,
+        args.min_stars,
+        args.min_forks,
+        args.min_watchers,
+        args.min_network,
+    )
     if args.mode == "top":
-        repos.sort(key=lambda x: x.get("stargazerCount", 0), reverse=True)
+        if args.sort_by == "forks":
+            repos.sort(key=lambda x: x.get("forkCount", 0), reverse=True)
+        elif args.sort_by == "watchers":
+            repos.sort(key=lambda x: x.get("watchersCount", 0), reverse=True)
+        elif args.sort_by == "network":
+            repos.sort(key=lambda x: x.get("networkCount", 0), reverse=True)
+        else:
+            repos.sort(key=lambda x: x.get("stargazerCount", 0), reverse=True)
         if args.json:
             print_top_json(repos, args.top)
         else:

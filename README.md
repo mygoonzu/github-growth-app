@@ -9,6 +9,7 @@ A Python CLI tool to find public GitHub repositories with:
 - Computes `weekly_stars`, `previous_week_stars`, `delta`, and `growth_rate`
 - Sorts by `delta`, `weekly_stars`, or `growth_rate`
 - Supports direct top-repository ranking by total stars
+- Supports filtering and ranking by forks, watchers, and network count
 - Outputs as table or JSON
 - Includes retry/backoff for transient API errors
 - Supports weekly, monthly, or custom-day analysis windows
@@ -66,6 +67,21 @@ Top repositories by total stars:
 python3 github_growth_app.py --mode top --min-stars 500 --top 20
 ```
 
+Top repositories by forks:
+```bash
+python3 github_growth_app.py --mode top --sort-by forks --min-forks 1000 --top 20
+```
+
+Top repositories by watchers:
+```bash
+python3 github_growth_app.py --mode top --sort-by watchers --min-watchers 200 --top 20
+```
+
+Top repositories by network:
+```bash
+python3 github_growth_app.py --mode top --sort-by network --min-network 1000 --top 20
+```
+
 Monthly window (30 days):
 ```bash
 python3 github_growth_app.py --period month --min-weekly-stars 20 --top 20
@@ -80,11 +96,14 @@ python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
 - `--mode`: `growth` (default) or `top` (rank by total stars)
 - `--token`: GitHub token (if omitted, read from `GITHUB_TOKEN` or `.env`)
 - `--min-stars`: minimum total stars (default: `500`)
+- `--min-forks`: minimum fork count (default: `0`)
+- `--min-watchers`: minimum watcher count (default: `0`)
+- `--min-network`: minimum network count (default: `0`)
 - `--max-repos`: maximum repositories to analyze (default: `30`)
-- `--min-weekly-stars`: minimum stars in the last 7 days (default: `20`)
+- `--min-weekly-stars`: minimum stars in the selected analysis window (default: `20`)
 - `--period`: analysis window preset (`week` or `month`, default: `week`)
 - `--window-days`: custom window length in days (overrides `--period`)
-- `--sort-by`: sorting metric (`delta`, `weekly_stars`, `growth_rate`)
+- `--sort-by`: sorting metric (`delta`, `weekly_stars`, `growth_rate`, `stars`, `forks`, `watchers`, `network`)
 - `--top`: number of results to display (default: `15`)
 - `--max-star-pages`: max stargazer pages per repo, 100 records/page (default: `20`)
 - `--json`: output in JSON format
