@@ -10,6 +10,7 @@ A Python CLI tool to find public GitHub repositories with:
 - Sorts by `delta`, `weekly_stars`, or `growth_rate`
 - Outputs as table or JSON
 - Includes retry/backoff for transient API errors
+- Supports weekly, monthly, or custom-day analysis windows
 
 ## Requirements
 - Python 3.9+
@@ -59,11 +60,23 @@ Export JSON:
 python3 github_growth_app.py --json --top 20 > result.json
 ```
 
+Monthly window (30 days):
+```bash
+python3 github_growth_app.py --period month --min-weekly-stars 20 --top 20
+```
+
+Custom window (for example 14 days):
+```bash
+python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
+```
+
 ## Arguments
 - `--token`: GitHub token (if omitted, read from `GITHUB_TOKEN` or `.env`)
 - `--min-stars`: minimum total stars (default: `500`)
 - `--max-repos`: maximum repositories to analyze (default: `30`)
 - `--min-weekly-stars`: minimum stars in the last 7 days (default: `20`)
+- `--period`: analysis window preset (`week` or `month`, default: `week`)
+- `--window-days`: custom window length in days (overrides `--period`)
 - `--sort-by`: sorting metric (`delta`, `weekly_stars`, `growth_rate`)
 - `--top`: number of results to display (default: `15`)
 - `--max-star-pages`: max stargazer pages per repo, 100 records/page (default: `20`)

@@ -60,7 +60,19 @@ def parse_args() -> argparse.Namespace:
         "--min-weekly-stars",
         type=int,
         default=20,
-        help="Minimum stars in the most recent 7 days",
+        help="Minimum stars in the latest analysis window",
+    )
+    parser.add_argument(
+        "--period",
+        choices=["week", "month"],
+        default="week",
+        help="Analysis window preset: week=7 days, month=30 days",
+    )
+    parser.add_argument(
+        "--window-days",
+        type=int,
+        default=None,
+        help="Custom analysis window in days (overrides --period)",
     )
     parser.add_argument(
         "--sort-by",
@@ -216,9 +228,10 @@ def weekly_growth_for_repo(
     name: str,
     now: datetime,
     max_star_pages: int,
+    window_days: int,
 ) -> Dict[str, int]:
-    week_start = now - timedelta(days=7)
-    prev_week_start = now - timedelta(days=14)
+    current_start = now - timedelta(days=window_days)
+    previous_start = now - timedelta(days=2 * window_days)
 
     current_week = 0
     previous_week = 0
@@ -257,9 +270,9 @@ def weekly_growth_for_repo(
                 continue
             starred_at = parse_iso8601(starred_at_raw)
 
-            if starred_at >= week_start:
+            if starred_at >= current_start:
                 current_week += 1
-            elif starred_at >= prev_week_start:
+            elif starred_at >= previous_start:
                 previous_week += 1
             else:
                 should_stop = True
@@ -283,6 +296,7 @@ def rank_repositories(
     min_weekly_stars: int,
     sort_by: str,
     max_star_pages: int,
+    window_days: int,
 ) -> List[RepoGrowth]:
     now = datetime.now(timezone.utc)
     result: List[RepoGrowth] = []
@@ -291,7 +305,14 @@ def rank_repositories(
         owner = repo["owner"]["login"]
         name = repo["name"]
         try:
-            metrics = weekly_growth_for_repo(token, owner, name, now, max_star_pages)
+            metrics = weekly_growth_for_repo(
+                token,
+                owner,
+                name,
+                now,
+                max_star_pages,
+                window_days,
+            )
         except RuntimeError as exc:
             print(
                 f"Warning: skipping {repo['nameWithOwner']} due to API error: {exc}",
@@ -340,13 +361,15 @@ def rank_repositories(
     return result
 
 
-def print_table(items: List[RepoGrowth], top: int) -> None:
+def print_table(items: List[RepoGrowth], top: int, window_days: int) -> None:
     show = items[:top]
     if not show:
         print("No repositories matched the criteria.")
         return
 
-    header = f"{'#':<3} {'Repo':<35} {'Stars':>9} {'7d':>6} {'Prev7d':>8} {'Delta':>7} {'Rate':>8}"
+    period_col = f"{window_days}d"
+    prev_col = f"Prev{window_days}d"
+    header = f"{'#':<3} {'Repo':<35} {'Stars':>9} {period_col:>6} {prev_col:>8} {'Delta':>7} {'Rate':>8}"
     print(header)
     print("-" * len(header))
 
@@ -390,6 +413,15 @@ def main() -> int:
         )
         return 1
 
+    if args.window_days is not None:
+        window_days = args.window_days
+    else:
+        window_days = 7 if args.period == "week" else 30
+
+    if window_days <= 0:
+        print("window_days must be > 0.", file=sys.stderr)
+        return 1
+
     repos = fetch_repositories(args.token, args.min_stars, args.max_repos)
     ranked = rank_repositories(
         args.token,
@@ -397,12 +429,13 @@ def main() -> int:
         args.min_weekly_stars,
         args.sort_by,
         args.max_star_pages,
+        window_days,
     )
 
     if args.json:
         print_json(ranked, args.top)
     else:
-        print_table(ranked, args.top)
+        print_table(ranked, args.top, window_days)
 
     return 0
 
