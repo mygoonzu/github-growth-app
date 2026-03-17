@@ -357,6 +357,107 @@ def weekly_growth_for_repo(
     max_star_pages: int,
     window_days: int,
 ) -> Dict[str, int]:
+    try:
+        return weekly_growth_for_repo_graphql(
+            token=token,
+            owner=owner,
+            name=name,
+            now=now,
+            max_star_pages=max_star_pages,
+            window_days=window_days,
+        )
+    except RuntimeError:
+        # Fallback to REST if GraphQL is unstable for a repository.
+        return weekly_growth_for_repo_rest(
+            token=token,
+            owner=owner,
+            name=name,
+            now=now,
+            max_star_pages=max_star_pages,
+            window_days=window_days,
+        )
+
+
+def weekly_growth_for_repo_graphql(
+    token: str,
+    owner: str,
+    name: str,
+    now: datetime,
+    max_star_pages: int,
+    window_days: int,
+) -> Dict[str, int]:
+    query = """
+    query ($owner: String!, $name: String!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        stargazers(first: 100, after: $cursor, orderBy: {field: STARRED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            starredAt
+          }
+        }
+      }
+    }
+    """
+
+    current_start = now - timedelta(days=window_days)
+    previous_start = now - timedelta(days=2 * window_days)
+
+    current_week = 0
+    previous_week = 0
+    cursor: Optional[str] = None
+    should_stop = False
+
+    for _ in range(max_star_pages):
+        data = github_graphql(
+            token,
+            query,
+            {"owner": owner, "name": name, "cursor": cursor},
+        )
+        stargazers = data["repository"]["stargazers"]
+        edges = stargazers.get("edges", [])
+        if not edges:
+            break
+
+        for edge in edges:
+            starred_at_raw = edge.get("starredAt")
+            if not starred_at_raw:
+                continue
+            starred_at = parse_iso8601(starred_at_raw)
+
+            if starred_at >= current_start:
+                current_week += 1
+            elif starred_at >= previous_start:
+                previous_week += 1
+            else:
+                should_stop = True
+                break
+
+        if should_stop:
+            break
+        if not stargazers["pageInfo"]["hasNextPage"]:
+            break
+        cursor = stargazers["pageInfo"]["endCursor"]
+
+        # Small pause to reduce request burst.
+        time.sleep(0.05)
+
+    return {
+        "current_week": current_week,
+        "previous_week": previous_week,
+    }
+
+
+def weekly_growth_for_repo_rest(
+    token: str,
+    owner: str,
+    name: str,
+    now: datetime,
+    max_star_pages: int,
+    window_days: int,
+) -> Dict[str, int]:
     current_start = now - timedelta(days=window_days)
     previous_start = now - timedelta(days=2 * window_days)
 
