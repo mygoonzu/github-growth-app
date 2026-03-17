@@ -10,9 +10,11 @@ A Python CLI tool to find public GitHub repositories with:
 - Sorts by `delta`, `weekly_stars`, or `growth_rate`
 - Supports direct top-repository ranking by total stars
 - Supports filtering and ranking by forks, watchers, and network count
-- Outputs as table or JSON
+- Outputs as table, JSON, or CSV
 - Includes retry/backoff for transient API errors
 - Supports weekly, monthly, or custom-day analysis windows
+- Supports config-file based runs (`.json` or `.yaml`)
+- Prints a run summary (fetched, filtered, output, API skips/errors)
 
 ## Requirements
 - Python 3.9+
@@ -62,6 +64,11 @@ Export JSON:
 python3 github_growth_app.py --json --top 20 > result.json
 ```
 
+Export CSV:
+```bash
+python3 github_growth_app.py --csv result.csv --top 20
+```
+
 Top repositories by total stars:
 ```bash
 python3 github_growth_app.py --mode top --min-stars 500 --top 20
@@ -92,6 +99,11 @@ Custom window (for example 14 days):
 python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
 ```
 
+Run from config file:
+```bash
+python3 github_growth_app.py --config config.example.json
+```
+
 ## Arguments
 - `--mode`: `growth` (default) or `top` (rank by total stars)
 - `--token`: GitHub token (if omitted, read from `GITHUB_TOKEN` or `.env`)
@@ -105,8 +117,16 @@ python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
 - `--window-days`: custom window length in days (overrides `--period`)
 - `--sort-by`: sorting metric (`delta`, `weekly_stars`, `growth_rate`, `stars`, `forks`, `watchers`, `network`)
 - `--top`: number of results to display (default: `15`)
+- `--config`: path to config file (`.json`, `.yaml`, `.yml`)
+- `--csv`: write results to CSV file path
 - `--max-star-pages`: max stargazer pages per repo, 100 records/page (default: `20`)
 - `--json`: output in JSON format
+
+## Config File
+You can put default arguments in a config file and run with `--config`.
+CLI flags still override config values.
+
+Example: [`config.example.json`](./config.example.json)
 
 ## Metrics
 - `weekly_stars`: stars gained in the last 7 days
@@ -123,3 +143,11 @@ python3 github_growth_app.py --window-days 14 --min-weekly-stars 10 --top 20
 - `Missing GitHub token`: set `GITHUB_TOKEN` or create `.env`
 - `No repositories matched the criteria`: lower `--min-weekly-stars` (for example `0` or `1`)
 - Temporary API failures: rerun the command (the script already retries)
+
+## Development
+Run tests locally:
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+GitHub Actions CI (`.github/workflows/ci.yml`) runs tests on every push and pull request.

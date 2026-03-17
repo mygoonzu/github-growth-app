@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import json
 import os
 import re
@@ -13,6 +14,22 @@ from urllib.parse import parse_qs, urlparse
 
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 GITHUB_REST_URL = "https://api.github.com"
+DEFAULTS: Dict[str, Any] = {
+    "mode": "growth",
+    "min_stars": 500,
+    "min_forks": 0,
+    "min_watchers": 0,
+    "min_network": 0,
+    "max_repos": 30,
+    "min_weekly_stars": 20,
+    "period": "week",
+    "window_days": None,
+    "sort_by": "delta",
+    "top": 15,
+    "max_star_pages": 20,
+    "json": False,
+    "csv": None,
+}
 
 
 @dataclass
@@ -29,6 +46,12 @@ class RepoGrowth:
     growth_rate: float
     language: str
     description: str
+
+
+@dataclass
+class RankResult:
+    items: List[RepoGrowth]
+    skipped_api_errors: int
 
 
 def load_env_file(path: str = ".env") -> None:
@@ -93,6 +116,8 @@ def parse_args() -> argparse.Namespace:
         help="Result sorting metric (growth mode or top mode)",
     )
     parser.add_argument("--top", type=int, default=15, help="Number of results to display")
+    parser.add_argument("--config", type=str, default=None, help="Path to JSON/YAML config file")
+    parser.add_argument("--csv", type=str, default=None, help="Write output rows to CSV file")
     parser.add_argument(
         "--max-star-pages",
         type=int,
@@ -101,6 +126,44 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
     return parser.parse_args()
+
+
+def load_config_file(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    if path.endswith(".json"):
+        data = json.loads(raw)
+    elif path.endswith(".yaml") or path.endswith(".yml"):
+        try:
+            import yaml  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "YAML config requires PyYAML. Install with: pip install pyyaml"
+            ) from exc
+        data = yaml.safe_load(raw)
+    else:
+        raise RuntimeError("Unsupported config format. Use .json, .yaml, or .yml")
+    if not isinstance(data, dict):
+        raise RuntimeError("Config file must contain a JSON/YAML object at top level.")
+    return data
+
+
+def apply_config_defaults(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.Namespace:
+    for key, default_value in DEFAULTS.items():
+        if key not in config:
+            continue
+        if not hasattr(args, key):
+            continue
+        current_value = getattr(args, key)
+        if current_value == default_value:
+            setattr(args, key, config[key])
+    return args
+
+
+def resolve_window_days(period: str, window_days: Optional[int]) -> int:
+    if window_days is not None:
+        return int(window_days)
+    return 7 if period == "week" else 30
 
 
 def github_json_request(
@@ -255,6 +318,17 @@ def apply_base_filters(
     return filtered
 
 
+def sort_top_repositories(repos: List[Dict[str, Any]], sort_by: str) -> None:
+    if sort_by == "forks":
+        repos.sort(key=lambda x: x.get("forkCount", 0), reverse=True)
+    elif sort_by == "watchers":
+        repos.sort(key=lambda x: x.get("watchersCount", 0), reverse=True)
+    elif sort_by == "network":
+        repos.sort(key=lambda x: x.get("networkCount", 0), reverse=True)
+    else:
+        repos.sort(key=lambda x: x.get("stargazerCount", 0), reverse=True)
+
+
 def parse_last_page(link_header: str) -> Optional[int]:
     if not link_header:
         return None
@@ -350,9 +424,10 @@ def rank_repositories(
     sort_by: str,
     max_star_pages: int,
     window_days: int,
-) -> List[RepoGrowth]:
+) -> RankResult:
     now = datetime.now(timezone.utc)
     result: List[RepoGrowth] = []
+    skipped_api_errors = 0
 
     for idx, repo in enumerate(repos, start=1):
         owner = repo["owner"]["login"]
@@ -371,6 +446,7 @@ def rank_repositories(
                 f"Warning: skipping {repo['nameWithOwner']} due to API error: {exc}",
                 file=sys.stderr,
             )
+            skipped_api_errors += 1
             continue
 
         weekly = metrics["current_week"]
@@ -422,7 +498,7 @@ def rank_repositories(
             reverse=True,
         )
 
-    return result
+    return RankResult(items=result, skipped_api_errors=skipped_api_errors)
 
 
 def print_table(items: List[RepoGrowth], top: int, window_days: int) -> None:
@@ -469,6 +545,43 @@ def print_json(items: List[RepoGrowth], top: int) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def write_growth_csv(items: List[RepoGrowth], top: int, csv_path: str) -> None:
+    fieldnames = [
+        "repo",
+        "url",
+        "stars",
+        "forks",
+        "watchers",
+        "network",
+        "window_stars",
+        "previous_window_stars",
+        "delta",
+        "growth_rate",
+        "language",
+        "description",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for x in items[:top]:
+            writer.writerow(
+                {
+                    "repo": x.name_with_owner,
+                    "url": x.url,
+                    "stars": x.stars,
+                    "forks": x.forks,
+                    "watchers": x.watchers,
+                    "network": x.network,
+                    "window_stars": x.weekly_stars,
+                    "previous_window_stars": x.previous_week_stars,
+                    "delta": x.delta,
+                    "growth_rate": "inf" if x.growth_rate == float("inf") else round(x.growth_rate, 4),
+                    "language": x.language,
+                    "description": x.description,
+                }
+            )
+
+
 def print_top_table(repos: List[Dict[str, Any]], top: int) -> None:
     show = repos[:top]
     if not show:
@@ -509,9 +622,57 @@ def print_top_json(repos: List[Dict[str, Any]], top: int) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def write_top_csv(repos: List[Dict[str, Any]], top: int, csv_path: str) -> None:
+    fieldnames = ["repo", "url", "stars", "forks", "watchers", "network", "language", "description"]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for repo in repos[:top]:
+            writer.writerow(
+                {
+                    "repo": repo["nameWithOwner"],
+                    "url": repo["url"],
+                    "stars": repo["stargazerCount"],
+                    "forks": repo.get("forkCount", 0),
+                    "watchers": repo.get("watchersCount", 0),
+                    "network": repo.get("networkCount", 0),
+                    "language": (repo.get("primaryLanguage") or {}).get("name") or "N/A",
+                    "description": (repo.get("description") or "").strip(),
+                }
+            )
+
+
+def print_run_summary(
+    *,
+    mode: str,
+    fetched: int,
+    enriched_errors: int,
+    after_filters: int,
+    output_count: int,
+    skipped_growth_api: int = 0,
+    window_days: Optional[int] = None,
+) -> None:
+    summary_parts = [
+        f"mode={mode}",
+        f"fetched={fetched}",
+        f"after_filters={after_filters}",
+        f"output={output_count}",
+        f"enrich_errors={enriched_errors}",
+    ]
+    if mode == "growth":
+        summary_parts.append(f"growth_api_skips={skipped_growth_api}")
+    if window_days is not None:
+        summary_parts.append(f"window_days={window_days}")
+    print("Summary: " + ", ".join(summary_parts), file=sys.stderr)
+
+
 def main() -> int:
     load_env_file()
     args = parse_args()
+
+    if args.config:
+        config_data = load_config_file(args.config)
+        args = apply_config_defaults(args, config_data)
 
     if not args.token:
         print(
@@ -520,16 +681,15 @@ def main() -> int:
         )
         return 1
 
-    if args.window_days is not None:
-        window_days = args.window_days
-    else:
-        window_days = 7 if args.period == "week" else 30
+    window_days = resolve_window_days(args.period, args.window_days)
 
     if window_days <= 0:
         print("window_days must be > 0.", file=sys.stderr)
         return 1
 
     repos = fetch_repositories(args.token, args.min_stars, args.max_repos)
+    fetched_count = len(repos)
+    enrich_errors = 0
     for repo in repos:
         owner = repo["owner"]["login"]
         name = repo["name"]
@@ -541,6 +701,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             metrics = {"forks": 0, "watchers": 0, "network": 0}
+            enrich_errors += 1
         repo["forkCount"] = metrics["forks"]
         repo["watchersCount"] = metrics["watchers"]
         repo["networkCount"] = metrics["network"]
@@ -554,22 +715,26 @@ def main() -> int:
         args.min_watchers,
         args.min_network,
     )
+    filtered_count = len(repos)
     if args.mode == "top":
-        if args.sort_by == "forks":
-            repos.sort(key=lambda x: x.get("forkCount", 0), reverse=True)
-        elif args.sort_by == "watchers":
-            repos.sort(key=lambda x: x.get("watchersCount", 0), reverse=True)
-        elif args.sort_by == "network":
-            repos.sort(key=lambda x: x.get("networkCount", 0), reverse=True)
-        else:
-            repos.sort(key=lambda x: x.get("stargazerCount", 0), reverse=True)
+        sort_top_repositories(repos, args.sort_by)
         if args.json:
             print_top_json(repos, args.top)
         else:
             print_top_table(repos, args.top)
+        if args.csv:
+            write_top_csv(repos, args.top, args.csv)
+            print(f"Wrote CSV: {args.csv}", file=sys.stderr)
+        print_run_summary(
+            mode="top",
+            fetched=fetched_count,
+            enriched_errors=enrich_errors,
+            after_filters=filtered_count,
+            output=min(args.top, len(repos)),
+        )
         return 0
 
-    ranked = rank_repositories(
+    rank_result = rank_repositories(
         args.token,
         repos,
         args.min_weekly_stars,
@@ -577,11 +742,25 @@ def main() -> int:
         args.max_star_pages,
         window_days,
     )
+    ranked = rank_result.items
 
     if args.json:
         print_json(ranked, args.top)
     else:
         print_table(ranked, args.top, window_days)
+    if args.csv:
+        write_growth_csv(ranked, args.top, args.csv)
+        print(f"Wrote CSV: {args.csv}", file=sys.stderr)
+
+    print_run_summary(
+        mode="growth",
+        fetched=fetched_count,
+        enriched_errors=enrich_errors,
+        after_filters=filtered_count,
+        output=min(args.top, len(ranked)),
+        skipped_growth_api=rank_result.skipped_api_errors,
+        window_days=window_days,
+    )
 
     return 0
 

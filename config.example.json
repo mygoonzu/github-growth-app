@@ -1,0 +1,16 @@
+{
+  "mode": "growth",
+  "min_stars": 500,
+  "min_forks": 0,
+  "min_watchers": 0,
+  "min_network": 0,
+  "max_repos": 50,
+  "min_weekly_stars": 10,
+  "period": "week",
+  "window_days": null,
+  "sort_by": "delta",
+  "top": 20,
+  "max_star_pages": 20,
+  "json": false,
+  "csv": null
+}
