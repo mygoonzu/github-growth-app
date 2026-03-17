@@ -43,39 +43,39 @@ def load_env_file(path: str = ".env") -> None:
                 if key and key not in os.environ:
                     os.environ[key] = value
     except OSError:
-        # Bo qua loi doc .env, script van co the chay voi bien moi truong he thong.
+        # Ignore .env read errors; system environment variables may still be available.
         return
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Lay repo public GitHub co stars > nguong va xep hang theo tang truong sao theo tuan."
+            "Find public GitHub repositories above a star threshold and rank weekly star growth."
         )
     )
-    parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token (hoac env GITHUB_TOKEN)")
-    parser.add_argument("--min-stars", type=int, default=500, help="Nguong toi thieu tong stars")
-    parser.add_argument("--max-repos", type=int, default=30, help="So repo toi da can phan tich")
+    parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token (or GITHUB_TOKEN env)")
+    parser.add_argument("--min-stars", type=int, default=500, help="Minimum total star count")
+    parser.add_argument("--max-repos", type=int, default=30, help="Maximum repositories to analyze")
     parser.add_argument(
         "--min-weekly-stars",
         type=int,
         default=20,
-        help="Nguong toi thieu stars trong 7 ngay gan nhat",
+        help="Minimum stars in the most recent 7 days",
     )
     parser.add_argument(
         "--sort-by",
         choices=["delta", "weekly_stars", "growth_rate"],
         default="delta",
-        help="Tieu chi sap xep ket qua",
+        help="Result sorting metric",
     )
-    parser.add_argument("--top", type=int, default=15, help="So dong ket qua can hien thi")
+    parser.add_argument("--top", type=int, default=15, help="Number of results to display")
     parser.add_argument(
         "--max-star-pages",
         type=int,
         default=20,
-        help="So trang stargazers toi da moi repo (100 records/trang)",
+        help="Max stargazer pages per repo (100 records/page)",
     )
-    parser.add_argument("--json", action="store_true", help="In ket qua dang JSON")
+    parser.add_argument("--json", action="store_true", help="Output results as JSON")
     return parser.parse_args()
 
 
@@ -105,13 +105,13 @@ def github_json_request(
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             transient = exc.code in (500, 502, 503, 504)
-            last_error = RuntimeError(f"GitHub API loi HTTP {exc.code}: {detail}")
+            last_error = RuntimeError(f"GitHub API HTTP {exc.code}: {detail}")
             if transient and attempt < retries - 1:
                 time.sleep(0.8 * (attempt + 1))
                 continue
             raise last_error from exc
         except error.URLError as exc:
-            last_error = RuntimeError(f"Khong ket noi duoc GitHub API: {exc}")
+            last_error = RuntimeError(f"Cannot connect to GitHub API: {exc}")
             if attempt < retries - 1:
                 time.sleep(0.8 * (attempt + 1))
                 continue
@@ -119,7 +119,7 @@ def github_json_request(
 
     if last_error:
         raise last_error
-    raise RuntimeError("Khong the goi GitHub API.")
+    raise RuntimeError("Unable to call GitHub API.")
 
 
 def github_graphql(token: str, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,7 +132,7 @@ def github_graphql(token: str, query: str, variables: Dict[str, Any]) -> Dict[st
     )
 
     if "errors" in data:
-        raise RuntimeError(f"GitHub GraphQL tra ve loi: {data['errors']}")
+        raise RuntimeError(f"GitHub GraphQL returned errors: {data['errors']}")
     return data["data"]
 
 
@@ -268,7 +268,7 @@ def weekly_growth_for_repo(
         if should_stop:
             break
 
-        # Nghi nhe de tranh dung API qua nhanh
+        # Small pause to reduce request burst.
         time.sleep(0.05)
 
     return {
@@ -294,7 +294,7 @@ def rank_repositories(
             metrics = weekly_growth_for_repo(token, owner, name, now, max_star_pages)
         except RuntimeError as exc:
             print(
-                f"Canh bao: bo qua {repo['nameWithOwner']} do loi API: {exc}",
+                f"Warning: skipping {repo['nameWithOwner']} due to API error: {exc}",
                 file=sys.stderr,
             )
             continue
@@ -321,7 +321,7 @@ def rank_repositories(
             )
         )
 
-        print(f"Da phan tich {idx}/{len(repos)} repo...", file=sys.stderr)
+        print(f"Analyzed {idx}/{len(repos)} repositories...", file=sys.stderr)
 
     if sort_by == "delta":
         result.sort(key=lambda r: (r.delta, r.weekly_stars, r.stars), reverse=True)
@@ -343,7 +343,7 @@ def rank_repositories(
 def print_table(items: List[RepoGrowth], top: int) -> None:
     show = items[:top]
     if not show:
-        print("Khong co repo nao khop dieu kien.")
+        print("No repositories matched the criteria.")
         return
 
     header = f"{'#':<3} {'Repo':<35} {'Stars':>9} {'7d':>6} {'Prev7d':>8} {'Delta':>7} {'Rate':>8}"
@@ -385,7 +385,7 @@ def main() -> int:
 
     if not args.token:
         print(
-            "Thieu GitHub token. Hay truyen --token hoac dat bien moi truong GITHUB_TOKEN.",
+            "Missing GitHub token. Pass --token or set GITHUB_TOKEN.",
             file=sys.stderr,
         )
         return 1
